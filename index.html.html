@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flight Strip — Free OCR Dispatch Extractor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg: #10141d;
+    --panel: #171d29;
+    --panel-2: #1e2634;
+    --border: #2b3348;
+    --border-light: #384062;
+    --text: #e7eaf0;
+    --muted: #8a93a8;
+    --amber: #f2a900;
+    --amber-dim: #7a5c14;
+    --teal: #35d0ac;
+    --red: #ff6b6b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.5;
+    padding: 28px 20px 60px;
+  }
+  .wrap{max-width: 1180px; margin: 0 auto;}
+
+  /* ---- header, styled like a flight-strip board header ---- */
+  header{
+    display:flex; justify-content:space-between; align-items:flex-end;
+    border-bottom: 2px solid var(--border-light);
+    padding-bottom: 14px; margin-bottom: 22px;
+    flex-wrap: wrap; gap: 10px;
+  }
+  .title-block h1{
+    margin:0; font-size: 19px; font-weight: 700; letter-spacing: 0.02em;
+    color: var(--text);
+  }
+  .title-block h1 span{ color: var(--amber); }
+  .title-block p{ margin: 4px 0 0; color: var(--muted); font-size: 12.5px; max-width: 560px;}
+  .badge-free{
+    border:1px solid var(--teal); color: var(--teal); border-radius: 3px;
+    padding: 3px 8px; font-size: 11px; letter-spacing: 0.05em; white-space:nowrap;
+  }
+
+  .callout{
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    padding: 12px 14px; border-radius: 4px; margin-bottom: 20px;
+    color: var(--muted); font-size: 12.5px;
+  }
+  .callout b{ color: var(--text); }
+
+  /* ---- upload zone ---- */
+  .dropzone{
+    border: 1px dashed var(--border-light);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 34px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .dropzone.drag{ border-color: var(--amber); background: #1c1608; }
+  .dropzone p{ margin: 6px 0 0; color: var(--muted); }
+  .dropzone .pick{ color: var(--amber); font-weight:600; }
+  .dropzone .lim{ font-size: 11px; margin-top: 10px; color: #5c6478;}
+  input[type=file]{ display:none; }
+
+  /* ---- controls row ---- */
+  .controls{ display:flex; gap:10px; align-items:center; margin: 16px 0 6px; flex-wrap:wrap;}
+  button{
+    font-family: var(--mono); font-size: 12.5px; cursor:pointer;
+    border-radius: 4px; border:1px solid var(--border-light);
+    background: var(--panel-2); color: var(--text); padding: 9px 14px;
+  }
+  button:hover:not(:disabled){ border-color: var(--amber); }
+  button:disabled{ opacity:.4; cursor:not-allowed; }
+  button.primary{ background: var(--amber); color:#1a1400; border-color: var(--amber); font-weight:700;}
+  button.primary:hover:not(:disabled){ background:#ffbb1a; }
+  .spacer{flex:1;}
+  .opt{ color: var(--muted); font-size: 12px; display:flex; align-items:center; gap:6px; }
+  .opt input[type=text]{ background: var(--panel); border:1px solid var(--border-light); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 6px 8px; border-radius: 4px; width: 170px; }
+  .opt input[type=checkbox]{ display:inline-block; }
+  .status-line{ color: var(--muted); font-size: 12px; }
+
+  /* ---- file strips ---- */
+  .strip-list{ margin-top: 14px; display:flex; flex-direction:column; gap:8px;}
+  .strip{
+    display:flex; align-items:center; gap:12px;
+    background: var(--panel); border:1px solid var(--border); border-left: 4px solid var(--border-light);
+    border-radius: 4px; padding: 10px 12px;
+  }
+  .strip.processing{ border-left-color: var(--amber); }
+  .strip.completed{ border-left-color: var(--teal); }
+  .strip.error{ border-left-color: var(--red); }
+  .strip .fname{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .strip .meta{ color: var(--muted); font-size: 11.5px; min-width: 90px; text-align:right;}
+  .strip .rm{ background:none; border:none; color:var(--muted); padding:2px 6px; }
+  .strip .rm:hover{ color: var(--red); border:none;}
+  .bar{ height:3px; background:var(--border); border-radius:2px; overflow:hidden; width:110px;}
+  .bar > div{ height:100%; background:var(--amber); width:0%; transition: width .2s ease;}
+
+  /* ---- results table ---- */
+  .results{ margin-top: 26px; }
+  .results h2{ font-size: 14px; margin: 0 0 4px; }
+  .results .sub{ color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .table-scroll{ overflow-x: auto; border: 1px solid var(--border); border-radius: 5px;}
+  table{ border-collapse: collapse; width: 100%; min-width: 1600px; }
+  th, td{ padding: 7px 9px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align:left; }
+  thead th{
+    position: sticky; top:0; background: var(--panel-2); color: var(--muted);
+    font-weight:600; font-size:11px; letter-spacing:.02em; border-bottom: 1px solid var(--border-light);
+  }
+  tbody tr:hover{ background: rgba(255,255,255,0.02); }
+  td[contenteditable=true]{ outline: none; cursor: text; }
+  td[contenteditable=true]:focus{ background: #241d0a; box-shadow: inset 0 0 0 1px var(--amber); }
+  td.flagged{ position: relative; }
+  td.flagged::after{
+    content: "•"; color: var(--amber); position:absolute; top:2px; right:2px; font-size: 14px;
+  }
+  .legend{ margin-top:8px; color:var(--muted); font-size:11.5px; }
+  .legend .dot{ color: var(--amber); }
+
+  .empty{ color: var(--muted); text-align:center; padding: 30px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="title-block">
+      <h1>FLIGHT <span>STRIP</span> — Dispatch OCR Extractor</h1>
+      <p>Upload scanned Computerized Flight Plan (CFP) PDFs. Everything runs in your browser — no API key, no upload to a server, no per-page cost.</p>
+    </div>
+    <div class="badge-free">FREE · RUNS LOCALLY</div>
+  </header>
+
+  <div class="callout">
+    <b>How it works:</b> open-source OCR (Tesseract.js) running in your browser — no API key, no cost. Each page is cleaned first (handwriting, yellow and grey highlights removed), then every number is cross-checked with the CFP's own arithmetic (fuel plan adds up, Ramp = Min Dispatch + Tankering, TOW = ZFW + Ramp − Taxi, LWT = TOW − Trip, PL = ZFW − DOW). <b>FL</b> is always the <b>3rd row</b> of the Fuel Correction table and <b>Fuel Burn</b> is its <b>1TON</b> value. <b>Actual Fuel</b> is read from the blue handwriting and is always marked <span style="color:var(--amber)">•</span> for a quick visual check. Any other value the tool is unsure about is marked too. Every cell is editable — click a cell to correct it.
+  </div>
+
+  <div class="dropzone" id="dropzone">
+    <div><span class="pick">Click to choose files</span><span style="color:var(--muted)"> or drag PDFs here</span></div>
+    <p id="dzsub">Scanned CFP / flight dispatch PDFs, one flight record per page.</p>
+    <div class="lim">Up to 31 PDFs per batch · OCR runs page-by-page, so large batches take a few minutes.</div>
+    <input type="file" id="fileInput" accept="application/pdf" multiple />
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="processBtn" disabled>Extract data</button>
+    <button id="clearBtn" disabled>Clear all</button>
+    <label class="opt">Known registrations
+      <input type="text" id="regsInput" value="S2ALB, S2ALD" spellcheck="false" />
+    </label>
+    <label class="opt"><input type="checkbox" id="allPasses" /> Max accuracy (always 3 OCR passes, slower)</label>
+    <div class="spacer"></div>
+    <span class="status-line" id="statusLine"></span>
+  </div>
+
+  <div class="strip-list" id="stripList"></div>
+
+  <div class="results">
+    <h2>Extracted records</h2>
+    <div class="sub" id="resultsSub">No records yet — upload and extract PDFs above.</div>
+    <div class="table-scroll" id="tableScroll" style="display:none;">
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th>File</th><th>Page</th><th>Date</th><th>Sector</th><th>Flt No</th><th>Computed</th>
+            <th>Reg</th><th>Trip</th><th>ALTN1</th><th>Min Dsptch Fuel</th><th>Tankering</th>
+            <th>Ramp Fuel</th><th>Actual Fuel</th><th>AV W/C</th><th>PDF %</th><th>Wind Dir/Spd</th>
+            <th>Total Dist</th><th>AVG ISA</th><th>CI</th><th>FL</th><th>Fuel Burn</th>
+            <th>ZFW</th><th>TOW</th><th>LWT</th><th>PL</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+    <div class="legend" id="legend" style="display:none;">
+      <span class="dot">•</span> = lower-confidence value (OCR passes disagreed, a cross-check failed, or handwriting) — worth a quick check.
+    </div>
+    <div class="controls" id="exportControls" style="display:none; margin-top:14px;">
+      <button id="copyBtn">Copy as TSV (paste into Excel)</button>
+      <button id="csvBtn">Download CSV</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+const MAX_FILES = 31;
+const FIELD_KEYS = ['date','route','fltNo','computed','reg','trip','altn1','minDsptchFuel','tankering',
+  'rampFuel','actualFuel','avWc','pdfPercent','avgWindDirSpeed','totalDistance','avgIsa','ci','fl','fuelBurn',
+  'zfw','tow','lwt','pl'];
+
+let files = []; // {id, file, status, progress, error}
+let records = []; // flat extracted rows: {fileName, pageNumber, ...FIELD_KEYS, flags:{fl:true,...}}
+let tessWorker = null;
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const stripList = document.getElementById('stripList');
+const processBtn = document.getElementById('processBtn');
+const clearBtn = document.getElementById('clearBtn');
+const statusLine = document.getElementById('statusLine');
+const tableScroll = document.getElementById('tableScroll');
+const resultsBody = document.getElementById('resultsBody');
+const resultsSub = document.getElementById('resultsSub');
+const legend = document.getElementById('legend');
+const exportControls = document.getElementById('exportControls');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', e => { e.preventDefault(); dropzone.classList.remove('drag'); });
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+  if (e.dataTransfer.files && e.dataTransfer.files.length) addFiles(Array.from(e.dataTransfer.files));
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files && e.target.files.length) addFiles(Array.from(e.target.files));
+  fileInput.value = '';
+});
+
+function addFiles(list){
+  const pdfs = list.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  if (pdfs.length === 0){ alert('Please choose PDF files only.'); return; }
+  let skipped = 0;
+  for (const f of pdfs){
+    if (files.length >= MAX_FILES){ skipped++; continue; }
+    if (files.some(x => x.file.name === f.name)) continue;
+    files.push({ id: Math.random().toString(36).slice(2), file: f, status: 'pending', progress: 0, error: null });
+  }
+  if (skipped) alert(`Maximum ${MAX_FILES} files per batch — ${skipped} file${skipped===1?'':'s'} not added.`);
+  renderStrips();
+  processBtn.disabled = files.filter(f => f.status === 'pending' || f.status === 'error').length === 0;
+  clearBtn.disabled = files.length === 0;
+}
+
+function renderStrips(){
+  stripList.innerHTML = '';
+  for (const f of files){
+    const el = document.createElement('div');
+    el.className = 'strip ' + f.status;
+    const label = f.status === 'pending' ? 'Queued'
+      : f.status === 'processing' ? 'Extracting…'
+      : f.status === 'completed' ? 'Done'
+      : 'Error';
+    el.innerHTML = `
+      <span class="fname">${escapeHtml(f.file.name)}</span>
+      <div class="bar"><div style="width:${f.progress||0}%"></div></div>
+      <span class="meta">${label}</span>
+      <button class="rm" data-id="${f.id}" title="Remove">✕</button>
+    `;
+    el.querySelector('.rm').addEventListener('click', () => {
+      files = files.filter(x => x.id !== f.id);
+      records = records.filter(r => r._fileId !== f.id);
+      renderStrips(); renderTable();
+      processBtn.disabled = files.filter(f => f.status === 'pending' || f.status === 'error').length === 0;
+      clearBtn.disabled = files.length === 0;
+    });
+    stripList.appendChild(el);
+  }
+}
+
+clearBtn.addEventListener('click', () => {
+  files = []; records = [];
+  renderStrips(); renderTable();
+  processBtn.disabled = true; clearBtn.disabled = true;
+  statusLine.textContent = '';
+});
+
+processBtn.addEventListener('click', processAll);
+
+async function getWorker(){
+  if (tessWorker) return tessWorker;
+  statusLine.textContent = 'Loading OCR engine (first run downloads ~2MB, then it is cached)…';
+  tessWorker = await Tesseract.createWorker('eng');
+  try{ await tessWorker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' }); }catch(e){ console.warn(e); }
+  statusLine.textContent = '';
+  return tessWorker;
+}
+let digitWorker = null;
+async function getDigitWorker(){
+  if (digitWorker) return digitWorker;
+  digitWorker = await Tesseract.createWorker('eng');
+  try{ await digitWorker.setParameters({ tessedit_pageseg_mode: '7', tessedit_char_whitelist: '0123456789 ' }); }catch(e){ console.warn(e); }
+  return digitWorker;
+}
+
+async function processAll(){
+  processBtn.disabled = true;
+  saveSettings();
+  const worker = await getWorker();
+  const pending = files.filter(f => f.status === 'pending' || f.status === 'error');
+  for (const f of pending){
+    f.status = 'processing'; f.progress = 2; f.error = null;
+    records = records.filter(r => r._fileId !== f.id);
+    renderStrips();
+    try{
+      await processOneFile(f, worker);
+      f.status = 'completed'; f.progress = 100;
+    }catch(err){
+      console.error('Failed to process', f.file.name, err);
+      f.status = 'error'; f.error = err.message || String(err);
+      statusLine.textContent = `Error on ${f.file.name}: ${f.error}`;
+    }
+    renderStrips();
+    renderTable();
+  }
+  statusLine.textContent = pending.length ? 'Done.' : '';
+  processBtn.disabled = files.filter(f => f.status === 'pending' || f.status === 'error').length === 0;
+}
+
+// ---------- settings (known registrations, accuracy mode) ----------
+const regsInput = document.getElementById('regsInput');
+const allPassesChk = document.getElementById('allPasses');
+function getKnownRegs(){
+  return regsInput.value.toUpperCase().split(/[\s,;]+/).map(s => s.replace(/[^A-Z0-9]/g, '')).filter(Boolean);
+}
+function saveSettings(){
+  try{ localStorage.setItem('cfpKnownRegs', regsInput.value); localStorage.setItem('cfpAllPasses', allPassesChk.checked ? '1' : '0'); }catch(e){}
+}
+(function loadSettings(){
+  try{
+    const r = localStorage.getItem('cfpKnownRegs'); if (r != null) regsInput.value = r;
+    allPassesChk.checked = localStorage.getItem('cfpAllPasses') === '1';
+  }catch(e){}
+})();
+
+// ---------- image clean-up: removes handwriting (coloured ink), yellow / grey highlights ----------
+function cleanCanvas(src, mode){
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(src, 0, 0);
+  const img = cx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4){
+    const r = d[i], g = d[i+1], b = d[i+2];
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    const lum = 0.299*r + 0.587*g + 0.114*b;
+    let v;
+    if (mode === 'B') v = chroma > 45 ? 255 : Math.max(0, Math.min(255, (lum - 70) / 130 * 255));
+    else if (mode === 'A') v = (chroma > 45 || lum > 150) ? 255 : 0;
+    else v = (chroma > 60 || lum > 165) ? 255 : 0;
+    d[i] = d[i+1] = d[i+2] = v; d[i+3] = 255;
+  }
+  cx.putImageData(img, 0, 0);
+  return c;
+}
+
+async function ocrCanvas(worker, canvas){
+  const { data } = await worker.recognize(canvas, {}, { blocks: true });
+  return { text: data.text || '', lines: flattenLines(data.blocks || []) };
+}
+
+// ---------- handwritten ACTUAL FUEL (blue ink only) ----------
+async function readActualFuel(srcCanvas, lines, rampFuel){
+  const L = lines.find(l => l.words.some(w => /^ACTUAL/i.test(w.text)));
+  if (!L) return '';
+  const ws = L.words;
+  const i = ws.findIndex(w => /^ACTUAL/i.test(w.text));
+  const fuelW = ws[i + 1] || ws[i];
+  const reasonW = ws.find(w => /^REASON/i.test(w.text));
+  const x0 = Math.floor(fuelW.bbox.x1 + 14);
+  const x1 = Math.floor(reasonW ? reasonW.bbox.x0 - 4 : x0 + 450);
+  const h = L.bbox.y1 - L.bbox.y0;
+  const y0 = Math.max(0, Math.floor(L.bbox.y0 - 0.2 * h));
+  const y1 = Math.min(srcCanvas.height, Math.ceil(L.bbox.y1 + 2.4 * h));
+  const w = x1 - x0, hh = y1 - y0;
+  if (w < 20 || hh < 10) return '';
+  const crop = document.createElement('canvas');
+  crop.width = (w * 2) + 40; crop.height = (hh * 2) + 40;
+  const cx = crop.getContext('2d', { willReadFrequently: true });
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, crop.width, crop.height);
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = hh;
+  const tx = tmp.getContext('2d', { willReadFrequently: true });
+  tx.drawImage(srcCanvas, x0, y0, w, hh, 0, 0, w, hh);
+  const img = tx.getImageData(0, 0, w, hh), d = img.data;
+  for (let p = 0; p < d.length; p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2];
+    const lum = 0.299*r + 0.587*g + 0.114*b;
+    const ink = (b - r > 25) && lum < 215;      // blue pen only; printed black text and ==== lines are ignored
+    d[p] = d[p+1] = d[p+2] = ink ? 0 : 255; d[p+3] = 255;
+  }
+  tx.putImageData(img, 0, 0);
+  cx.imageSmoothingEnabled = false;
+  cx.drawImage(tmp, 0, 0, w, hh, 20, 20, w * 2, hh * 2);
+  const dw = await getDigitWorker();
+  const { data } = await dw.recognize(crop);
+  const toks = (data.text || '').match(/\d{4,6}/g) || [];
+  const ramp = +rampFuel || 0;
+  for (const t of toks){
+    const v = +t;
+    if (!ramp || (v >= ramp * 0.4 && v <= ramp * 1.7)) return t;
+  }
+  return '';
+}
+
+async function processOneFile(fileState, worker){
+  const buf = await fileState.file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const numPages = pdf.numPages;
+  const knownRegs = getKnownRegs();
+  const allPasses = allPassesChk.checked;
+
+  for (let pageNum = 1; pageNum <= numPages; pageNum++){
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 2.4 });
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    await page.render({ canvasContext: ctx, canvas, viewport }).promise;
+
+    fileState.progress = 5 + Math.round((pageNum - 0.8) / numPages * 90);
+    renderStrips();
+
+    // pass 1: soft clean-up (best single pass)
+    const ocrB = await ocrCanvas(worker, cleanCanvas(canvas, 'B'));
+    const passes = [Object.assign(solvePass(ocrB), { weight: 2.2 })];
+    let cons = consensus(passes, { knownRegs });
+    const unsure = () => Object.keys(cons.flags).length > 0 || passes[0].ok < passes[0].checks
+      || FIELD_LIST.some(k => !cons.rec[k]);
+
+    // extra passes only when something looks doubtful (or when "always run all passes" is ticked)
+    if (allPasses || unsure()){
+      fileState.progress = 5 + Math.round((pageNum - 0.5) / numPages * 90); renderStrips();
+      for (const mode of ['A', 'D']){
+        const o = await ocrCanvas(worker, cleanCanvas(canvas, mode));
+        passes.push(Object.assign(solvePass(o), { weight: 1 }));
+        cons = consensus(passes, { knownRegs });
+        if (!allPasses && !unsure()) break;
+      }
+    }
+
+    const record = Object.assign({}, cons.rec);
+    const flags = Object.assign({}, cons.flags);
+
+    // handwritten Actual Fuel (blue ink) — always flagged for a quick visual check
+    try{
+      const act = await readActualFuel(canvas, ocrB.lines, record.rampFuel);
+      record.actualFuel = act;
+      if (act) flags.actualFuel = true;
+    }catch(e){ console.warn('actual fuel read failed', e); record.actualFuel = ''; }
+
+    records.push(Object.assign({ _fileId: fileState.id, fileName: fileState.file.name, pageNumber: pageNum, flags }, record));
+
+    fileState.progress = 5 + Math.round(pageNum / numPages * 90);
+    renderStrips();
+  }
+}
+
+function flattenLines(blocks){
+  const lines = [];
+  for (const block of blocks){
+    const paras = block.paragraphs || [];
+    for (const para of paras){
+      for (const line of (para.lines || [])){
+        lines.push({ text: line.text || '', bbox: line.bbox, words: line.words || [] });
+      }
+    }
+  }
+  return lines;
+}
+
+// ==== PURE-LOGIC-START ====
+const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const D2L = {'0':'O','1':'I','2':'Z','4':'A','5':'S','6':'G','7':'T','8':'B'};
+
+function cX(b){ return (b.x0 + b.x1) / 2; }
+function cY(b){ return (b.y0 + b.y1) / 2; }
+function digitsOnly(s){ return String(s || '').replace(/\D/g, ''); }
+function uniq(a){ return Array.from(new Set(a)); }
+
+function fixMonth(tok){
+  tok = tok.toUpperCase().split('').map(c => D2L[c] || c).join('');
+  let best = '', bd = 9;
+  for (const m of MONTHS){
+    let d = 0;
+    for (let i = 0; i < 3; i++) if (m[i] !== tok[i]) d++;
+    if (d < bd){ bd = d; best = m; }
+  }
+  return bd <= 1 ? best : '';
+}
+
+// all 4..6 digit strings that could hold a fuel figure: the number itself, plus 5-digit windows
+// (strips stray characters that the OCR glued on, e.g. a ':' read as '1')
+function numVariants(tok){
+  const d = digitsOnly(tok);
+  if (d.length < 3) return d ? [d] : [];
+  const out = [d];
+  if (d.length > 5){
+    for (let i = d.length - 5; i >= 0; i--) out.push(d.slice(i, i + 5));
+  }
+  return uniq(out);
+}
+
+function cleanRest(s){
+  return s.replace(/\([^)]*\)/g, ' ')
+          .replace(/\(?\s*\b[A-Z]{3,4}\s*\/\s*\d+\s*\)?/gi, ' ')
+          .replace(/\b\d+\s*%/g, ' ')
+          .replace(/\b\d{1,2}:\d{2}\b/g, ' ')
+          .replace(/\.{2,}/g, ' ');
+}
+function labelNums(block, labelRe){
+  const m = block.match(new RegExp(labelRe + '([^\\n]*)', 'i'));
+  if (!m) return null;
+  return cleanRest(m[1]).match(/\d+/g) || [];
+}
+
+// ---------- header / labelled single-line fields ----------
+function headText(text){
+  const i = text.search(/FUEL\s*PLAN/i);
+  return i > 0 ? text.slice(0, i) : text.slice(0, 1200);
+}
+function extractDate(head){
+  const re = /(?<![0-9A-Z])(\d{2})\s?([A-Z0-9]{3})\s?(\d{2})(?![0-9])/g;
+  let m;
+  while ((m = re.exec(head))){
+    const day = +m[1];
+    const mon = fixMonth(m[2]);
+    if (day >= 1 && day <= 31 && mon) return m[1] + mon + m[3];
+  }
+  return '';
+}
+function extractFltNo(head){
+  let m = head.match(/FLT\s*\w{1,2}\s*[:.+\-]?\s*([A-Z]{2,3}\s?\d{2,4}[A-Z]?)/i);
+  if (m) return m[1].replace(/\s+/g, '').toUpperCase();
+  m = head.match(/\b[A-Z]{4}\s*-\s*[A-Z]{4}\s+[v]?([A-Z]{3}\s?\d{3,4})\b/);
+  if (m) return m[1].replace(/\s+/g, '').toUpperCase();
+  m = head.match(/\bUBG\s?\d{3,4}\b/i);
+  return m ? m[0].replace(/\s+/g, '').toUpperCase() : '';
+}
+function extractReg(head){
+  let m = head.match(/\bREG\b[^A-Z0-9\n]{0,6}(S2\s?-?\s?[A-Z0-9]{3})/i)
+       || head.match(/\b(S2\s?-?\s?[A-Z]{3})\b/);
+  if (m) return m[1].replace(/[\s\-]/g, '').toUpperCase();
+  m = head.match(/\bREG\b[^A-Z0-9\n]{0,6}([A-Z0-9]{5,6})/i);
+  return m ? m[1].toUpperCase() : '';
+}
+function extractSector(head){
+  const re = /\b([A-Z]{4})\s*\/\s*([A-Z]{3})\b/g;
+  const found = [];
+  let m;
+  while ((m = re.exec(head)) && found.length < 2) found.push([m[1], m[2]]);
+  if (found.length < 2) return '';
+  // the big title line "VGHS-OEJN UBG361" is printed cleanly: use it to correct the ICAO codes
+  const t = head.match(/\b([A-Z]{4})\s*-\s*([A-Z]{4})\b/);
+  if (t){
+    if (editDist(found[0][0], t[1]) <= 1) found[0][0] = t[1];
+    if (editDist(found[1][0], t[2]) <= 1) found[1][0] = t[2];
+  }
+  return found[0].join('/') + ' TO ' + found[1].join('/');
+}
+
+function extractRight(t){
+  const r = {};
+  const g = (re, i) => { const m = t.match(re); return m ? m[i || 1] : ''; };
+  r.computed = g(/COMPUTED\s*[:.\-]?\s*([0-9]{5,8})/i);
+  const wc = t.match(/AV\s*W\s*\/?\s*C\S{0,2}\s*[:.\-]?\s*(\d{1,3})\s*KTS?\s*(HEAD|TAIL)/i);
+  r.avWc = wc ? `${wc[1]} KTS ${wc[2].toUpperCase()}` : '';
+  r.pdfPercent = g(/[PB]DF\b[^0-9\n]{0,12}(\d{1,2}[.,]\d)/i).replace(',', '.');
+  const wnd = t.match(/AVG\s*WIND\s*DIR\s*\/?\s*SPEED\s*[:.\-+]?\s*(\d{3})\s*\/\s*(\d{2,3})/i);
+  r.avgWindDirSpeed = wnd ? `${wnd[1]}/${wnd[2]}` : '';
+  const gc = t.match(/DIST\s*\(?GC\)?[^0-9\n]{0,25}?(\d{3,5})\s*NM/i);
+  r._gc = gc ? +gc[1] : 0;
+  const td = t.match(/TOTAL\s*DISTANCE[^0-9\n]{0,40}(\d{3,6})/i);
+  r._totalRaw = td ? td[1] : '';
+  r.avgIsa = g(/AVG\s*ISA[^0-9\n\-]{0,40}(-?\d{1,2}\s?[.,]\s?\d)/i).replace(/\s/g, '').replace(',', '.');
+  r.ci = g(/COST\s*INDEX\s*\(?\s*CI\s*\)?[^0-9\n]{0,10}(\d{1,3})\b/i) || g(/\bCI\b\s*[:.\-]?\s*(\d{1,3})\b/i);
+  return r;
+}
+function resolveTotalDist(raw, gc){
+  if (!raw) return { v: '', flag: true };
+  const wins = [raw];
+  if (raw.length > 4) for (let i = 0; i + 4 <= raw.length; i++) wins.push(raw.slice(i, i + 4));
+  const ok = v => +v >= 100 && +v <= 9999 && (!gc || (+v >= gc * 0.95 && +v <= gc * 1.35));
+  for (const w of uniq(wins)) if (w.length <= 4 && ok(w)) return { v: w, flag: raw.length > 4 };
+  return { v: raw.length <= 4 ? raw : raw.slice(0, 4), flag: true };
+}
+
+// ---------- FUEL PLAN block (left column only) ----------
+function planRegion(lines){
+  let maxX = 0;
+  for (const l of lines) for (const w of l.words) maxX = Math.max(maxX, w.bbox.x1);
+  const cutoff = maxX * 0.46;
+  const left = lines.map(l => l.words.filter(w => cX(w.bbox) < cutoff).map(w => w.text).join(' '));
+  let a = left.findIndex(s => /FUEL\s*PLAN|\bTAX/i.test(s));
+  let b = left.findIndex((s, i) => i > a && /ACTUAL/i.test(s));
+  if (a < 0) return '';
+  if (b < 0) b = Math.min(left.length - 1, a + 14);
+  return left.slice(a, b + 1).join('\n');
+}
+function extractPlan(lines){
+  const region = planRegion(lines);
+  const P = { region };
+  if (!region) return P;
+  const first = (arr, minLen) => (arr || []).find(x => x.length >= (minLen || 1));
+  const taxiNums = labelNums(region, '\\bOUT\\b');
+  P.taxi = +(first(taxiNums, 3) || 900);
+  const a1 = labelNums(region, 'ALTN\\s*[1IlL]');
+  P.altn1 = a1 ? first(a1, 3) || '' : '';
+  const a2 = labelNums(region, 'ALTN\\s*2');
+  P.altn2 = +(first(a2, 1) || 0);
+  P.rsrv = +(first(labelNums(region, 'F\\.?\\s*RSRV'), 3) || 3000);
+  P.comp = +(first(labelNums(region, 'COMPANY\\s*FUEL'), 1) || 0);
+  const md = labelNums(region, 'MIN\\s*\\.?\\s*DS?PTCH\\s*\\.?\\s*FU\\w*');
+  P.minDVars = md ? numVariants(first(md, 4) || '') : [];
+  const tk = labelNums(region, 'TANKERING');
+  P.tankRaw = tk && tk.length ? tk[0] : null;
+  const rp = labelNums(region, 'RAMP\\s*FUEL');
+  P.rampVars = rp ? numVariants(first(rp, 4) || '') : [];
+  // trip pool = every 4..6 digit token in the region (label of the TRIP line is often garbled by ticks)
+  const pool = [];
+  for (const line of region.split('\n')){
+    const nums = cleanRest(line).match(/\d{4,6}/g) || [];
+    for (const n of nums) for (const v of numVariants(n)) pool.push(v);
+  }
+  P.tripPool = uniq(pool);
+  const tl = labelNums(region, '\\bTRIP\\b');
+  P.tripLabel = tl ? uniq((tl.filter(x => x.length >= 4)).flatMap(numVariants)) : [];
+  return P;
+}
+function reconcileFuel(P, tableTrips){
+  const out = { flags: {}, checks: 0, ok: 0 };
+  const altn1 = +P.altn1 || 0;
+  const others = (P.taxi || 900) + altn1 + (P.altn2 || 0) + (P.rsrv || 3000) + (P.comp || 0);
+  const contOf = t => Math.round(t * 0.05);
+  const sumOK = (m, t) => Math.abs(m - (others + t + contOf(t))) <= 2;
+  const minDs = (P.minDVars || []).map(Number).filter(n => n > 1000);
+  const trips = uniq([].concat(P.tripLabel || [], (tableTrips || []).map(String), P.tripPool || [])).map(Number).filter(n => n > 1000);
+  let best = null;
+  if (altn1){
+    outer: for (const m of minDs) for (const t of trips) if (sumOK(m, t)){ best = { m, t }; break outer; }
+  }
+  out.checks++;
+  if (best){
+    out.ok++;
+    out.minD = best.m; out.trip = best.t;
+  } else {
+    const m = minDs[0];
+    out.minD = m || '';
+    out.flags.minDsptchFuel = true;
+    if (m && altn1){
+      const calc = Math.round((m - others) / 1.05);
+      const near = (tableTrips || []).map(Number).find(t => Math.abs(t - calc) <= 3);
+      out.trip = near || calc;
+    } else {
+      out.trip = (P.tripLabel || [])[0] ? +P.tripLabel[0] : ((tableTrips || [])[0] ? +tableTrips[0] : '');
+    }
+    out.flags.trip = true;
+  }
+  // tankering / ramp:  ramp == min dispatch + tankering (exact)
+  const m = out.minD;
+  const T = P.tankRaw != null ? +P.tankRaw : null;
+  const rv = (P.rampVars || []).map(Number);
+  out.checks++;
+  let done = false;
+  if (m){
+    for (const r of rv){
+      const d = r - m;
+      if (T != null && d === T){ out.ramp = r; out.tank = T; done = true; out.ok++; break; }
+    }
+    if (!done) for (const r of rv){
+      if (r - m === 0){ out.ramp = r; out.tank = 0; done = true; out.ok++; if (T != null && T !== 0) out.flags.tankering = true; break; }
+    }
+    if (!done && T == null){
+      for (const r of rv){
+        const d = r - m;
+        if (d >= 100 && d <= 30000){ out.ramp = r; out.tank = d; out.flags.tankering = out.flags.rampFuel = true; done = true; break; }
+      }
+    }
+    if (!done){
+      if (T != null && T >= 0 && (T === 0 || T >= 100)){ out.ramp = m + T; out.tank = T; }
+      else { out.ramp = m; out.tank = 0; }
+      out.flags.tankering = out.flags.rampFuel = true;
+    }
+  } else {
+    out.ramp = rv[0] || ''; out.tank = T != null ? T : '';
+    out.flags.rampFuel = out.flags.tankering = true;
+  }
+  out.altn1 = altn1 || '';
+  return out;
+}
+
+// ---------- STRUCTURAL: ZFW / TOW / LWT / PL on the ESTIMATED row ----------
+function extractStructural(text){
+  const i = text.search(/ESTIMATED/i);
+  if (i < 0) return {};
+  let block = text.slice(i);
+  const j = block.search(/RAMP\s*W/i);
+  const rampW = j >= 0 ? (block.slice(j).match(/RAMP\s*W\S*\s*[:.]?\s*(\d{5,6})/i) || [])[1] : '';
+  block = j >= 0 ? block.slice(0, j) : block.slice(0, 400);
+  const tok = re => { const m = block.match(re); const d = m ? digitsOnly(m[1]) : ''; return d.length >= 5 && d.length <= 6 ? d : ''; };
+  const S = {
+    zfw: tok(/ZFW\s*[:.]?\s*(\S+)/i),
+    tow: tok(/TOW\s*[:.]?\s*(\S+)/i),
+    lwt: tok(/LWT\s*[:.]?\s*(\S+)/i),
+    pl: ''
+  };
+  const pm = block.match(/PL[^0-9]{0,60}(\d{4,6})/i);
+  S.pl = pm ? pm[1] : '';
+  S.rampW = rampW || '';
+  const dm = text.match(/DOW\s*[:.]?\s*(\d{5,6})/i);
+  S.dow = dm ? dm[1] : '';
+  return S;
+}
+function reconcileStruct(S, F){
+  const out = { flags: {}, checks: 0, ok: 0 };
+  const n = v => (v === '' || v == null ? null : +v);
+  let v = { zfw: n(S.zfw), tow: n(S.tow), lwt: n(S.lwt), pl: n(S.pl) };
+  const dow = n(S.dow), ramp = n(F.ramp), taxi = n(F.taxi) || 900, trip = n(F.trip), rampW = n(S.rampW);
+  const near = (a, b) => a != null && b != null && Math.abs(a - b) <= 2;
+  function rels(x){
+    const r = [];
+    if (ramp != null){
+      if (x.zfw != null && x.tow != null) r.push(near(x.tow, x.zfw + ramp - taxi));
+      if (rampW != null && x.zfw != null) r.push(near(rampW, x.zfw + ramp));
+    }
+    if (trip != null && x.tow != null && x.lwt != null) r.push(near(x.lwt, x.tow - trip));
+    if (dow != null && x.zfw != null && x.pl != null) r.push(near(x.pl, x.zfw - dow));
+    return r;
+  }
+  const score = x => { const r = rels(x); return r.filter(Boolean).length - r.filter(b => !b).length * 2; };
+  function derived(k, x){
+    const c = [];
+    if (k === 'zfw'){
+      if (x.tow != null && ramp != null) c.push(x.tow - ramp + taxi);
+      if (rampW != null && ramp != null) c.push(rampW - ramp);
+      if (x.pl != null && dow != null) c.push(x.pl + dow);
+    }
+    if (k === 'tow'){
+      if (x.zfw != null && ramp != null) c.push(x.zfw + ramp - taxi);
+      if (x.lwt != null && trip != null) c.push(x.lwt + trip);
+      if (rampW != null) c.push(rampW - taxi);
+    }
+    if (k === 'lwt' && x.tow != null && trip != null) c.push(x.tow - trip);
+    if (k === 'pl' && x.zfw != null && dow != null) c.push(x.zfw - dow);
+    return c;
+  }
+  let cur = Object.assign({}, v);
+  let sc = score(cur);
+  for (let round = 0; round < 2; round++){
+    let improved = false;
+    for (const k of ['zfw', 'tow', 'lwt', 'pl']){
+      for (const d of derived(k, cur)){
+        const trial = Object.assign({}, cur, { [k]: d });
+        const s2 = score(trial);
+        const fixesNull = cur[k] == null && s2 >= sc;
+        if (s2 > sc || fixesNull){ cur = trial; sc = s2; out.flags[k] = true; improved = true; }
+      }
+    }
+    if (!improved) break;
+  }
+  const r = rels(cur);
+  out.checks = r.length; out.ok = r.filter(Boolean).length;
+  for (const k of ['zfw', 'tow', 'lwt', 'pl']) out[k] = cur[k] == null ? '' : String(cur[k]);
+  if (r.some(b => !b)) for (const k of ['zfw', 'tow', 'lwt', 'pl']) out.flags[k] = true;
+  return out;
+}
+
+// ---------- FUEL CORRECTION TABLE: 3rd row ----------
+function extractTable(lines){
+  const all = [];
+  for (const l of lines) for (const w of l.words) all.push(w);
+  const norm = s => s.replace(/[^A-Za-z0-9\/]/g, '');
+  const hdr = lines.find(l => l.words.some(w => /^TR[I1l]P$/i.test(norm(w.text))) && l.words.some(w => /^1?[O0]?KT$|^1[O0]KT$/i.test(norm(w.text))));
+  if (!hdr) return {};
+  const wf = re => hdr.words.filter(w => re.test(norm(w.text)));
+  const tripW = wf(/^TR[I1l]P$/i).pop();
+  const ktW = wf(/^1[O0]KT$/i).pop();
+  const tonW = wf(/^[1Il]T[O0]N$/i).pop();
+  const dcW = wf(/^[DB]\/[CcGg]$/i).pop();
+  if (!tripW) return {};
+  const tripX = cX(tripW.bbox);
+  const sp = tonW && ktW ? Math.abs(cX(tonW.bbox) - cX(ktW.bbox)) : (ktW ? Math.abs(cX(ktW.bbox) - tripX) : 60);
+  const tonX = tonW ? cX(tonW.bbox) : tripX + 2 * sp;
+  let flW = hdr.words.find(w => /^[FP]L$/i.test(norm(w.text)) && cX(w.bbox) < tripX - 2 * sp);
+  const flX = flW ? cX(flW.bbox) : tripX - 3.4 * sp;
+  const xMin = flX - 0.8 * sp, xMax = (dcW ? cX(dcW.bbox) : tonX + sp) + 0.8 * sp;
+  const hY = cY(hdr.bbox);
+  const hs = all.filter(w => w.bbox.y1 - w.bbox.y0 > 0).map(w => w.bbox.y1 - w.bbox.y0).sort((a, b) => a - b);
+  const medH = hs[Math.floor(hs.length / 2)] || 20;
+  const cand = all.filter(w => cY(w.bbox) > hY + medH * 0.6 && cX(w.bbox) > xMin && cX(w.bbox) < xMax)
+                  .sort((a, b) => cY(a.bbox) - cY(b.bbox));
+  const numTxt = w => w.text.replace(/[Oo]/g, '0');
+  const isNum = w => /^-?\d[\d.]*$/.test(numTxt(w));
+  const rows = [];
+  let cur = null;
+  for (const w of cand){
+    if (cur && Math.abs(cY(w.bbox) - cur.y) < medH * 0.7){
+      cur.words.push(w); cur.y = cur.words.reduce((s, x) => s + cY(x.bbox), 0) / cur.words.length;
+    } else {
+      if (cur) rows.push(cur);
+      cur = { y: cY(w.bbox), words: [w] };
+    }
+  }
+  if (cur) rows.push(cur);
+  const good = [];
+  for (const r of rows){
+    const nums = r.words.filter(isNum);
+    if (nums.length >= 3){
+      if (good.length >= 2){
+        const pitch = (good[good.length - 1].y - good[0].y) / (good.length - 1);
+        if (r.y - good[good.length - 1].y > pitch * 2.2) break;
+      }
+      r.words.sort((a, b) => cX(a.bbox) - cX(b.bbox));
+      good.push(r);
+    } else if (good.length >= 1 && r.y - good[good.length - 1].y > medH * 4) break;
+    if (good.length >= 6) break;
+  }
+  if (!good.length) return {};
+  const res = { rowCount: good.length, flagged: false };
+  const flOf = r => {
+    const w = r.words.filter(isNum).sort((a, b) => Math.abs(cX(a.bbox) - flX) - Math.abs(cX(b.bbox) - flX))[0];
+    if (!w || Math.abs(cX(w.bbox) - flX) > 0.9 * sp) return null;
+    const t = numTxt(w);
+    return /^(?:0|[2-4]\d0)$/.test(t) ? +t : null;
+  };
+  const tripOf = r => {
+    const ws = r.words.filter(w => /^\d{4,6}$/.test(numTxt(w)));
+    if (!ws.length) return null;
+    return ws.sort((a, b) => Math.abs(cX(a.bbox) - tripX) - Math.abs(cX(b.bbox) - tripX))[0];
+  };
+  res.tripVals = good.map(r => { const w = tripOf(r); return w ? numTxt(w).slice(0, 5) : ''; }).filter(Boolean);
+  if (good.length < 3){ res.flagged = true; }
+  const idx = good.length >= 3 ? 2 : good.length - 1;
+  const row = good[idx];
+  // FL: read it, then confirm against the other rows (they step by 20)
+  const reads = good.map(flOf);
+  const votes = {};
+  reads.forEach((v, j) => { if (v) { const e = v + 20 * (j - idx); votes[e] = (votes[e] || 0) + 1; } });
+  let fl = reads[idx];
+  const ranked = Object.keys(votes).sort((a, b) => votes[b] - votes[a]);
+  if (fl == null || (ranked.length && +ranked[0] !== fl && votes[ranked[0]] >= 2)){
+    if (ranked.length){ fl = +ranked[0]; res.flagged = true; }
+  }
+  res.fl = fl != null ? String(fl) : '';
+  const tripTok = tripOf(row);
+  res.tripVal = tripTok ? numTxt(tripTok).slice(0, 5) : '';
+  const ints = row.words.filter(w => /^\d{1,4}$/.test(numTxt(w)) && w !== tripTok);
+  let byPos = '';
+  if (tripTok){
+    const after = ints.filter(w => cX(w.bbox) > cX(tripTok.bbox));
+    if (after.length >= 3) byPos = numTxt(after[1]);
+  }
+  let byX = '';
+  const right = ints.filter(w => !tripTok || cX(w.bbox) > cX(tripTok.bbox));
+  if (right.length) byX = numTxt(right.sort((a, b) => Math.abs(cX(a.bbox) - tonX) - Math.abs(cX(b.bbox) - tonX))[0]);
+  res.fuelBurn = byPos || byX;
+  if (byPos && byX && byPos !== byX) res.flagged = true;
+  if (!res.fuelBurn) res.flagged = true;
+  return res;
+}
+
+// ---------- one OCR pass -> reconciled record ----------
+function solvePass(ocr){
+  const text = ocr.text || '', lines = ocr.lines || [];
+  const head = headText(text);
+  const rec = {};
+  rec.date = extractDate(head);
+  rec.fltNo = extractFltNo(head);
+  rec.reg = extractReg(head);
+  rec.route = extractSector(head);
+  Object.assign(rec, extractRight(text));
+  const tbl = extractTable(lines);
+  const P = extractPlan(lines);
+  const F = reconcileFuel(P, tbl.tripVal ? [tbl.tripVal].concat((tbl.tripVals || []).filter(x => x !== tbl.tripVal)) : (tbl.tripVals || []));
+  const S = extractStructural(text);
+  const SR = reconcileStruct(S, { ramp: F.ramp, taxi: P.taxi, trip: F.trip });
+  rec.trip = F.trip === '' ? '' : String(F.trip);
+  rec.altn1 = F.altn1 ? String(F.altn1) : '';
+  rec.minDsptchFuel = F.minD === '' ? '' : String(F.minD);
+  rec.tankering = F.tank === '' ? '' : String(F.tank);
+  rec.rampFuel = F.ramp === '' ? '' : String(F.ramp);
+  const td = resolveTotalDist(rec._totalRaw, rec._gc);
+  rec.totalDistance = td.v;
+  rec.fl = tbl.fl || ''; rec.fuelBurn = tbl.fuelBurn || '';
+  rec.zfw = SR.zfw || ''; rec.tow = SR.tow || ''; rec.lwt = SR.lwt || ''; rec.pl = SR.pl || '';
+  const flags = Object.assign({}, F.flags);
+  for (const k of ['zfw', 'tow', 'lwt', 'pl']) if (SR.flags[k]) flags[k] = true;
+  if (td.flag) flags.totalDistance = true;
+  if (tbl.flagged){ flags.fl = true; flags.fuelBurn = true; }
+  // does the table's 3rd-row trip agree with the plan trip?
+  let checks = F.checks + SR.checks + 1, ok = F.ok + SR.ok;
+  if (tbl.tripVal && rec.trip){ if (+tbl.tripVal === +rec.trip) ok++; else flags.trip = true; }
+  delete rec._gc; delete rec._totalRaw;
+  return { rec, flags, score: ok - (checks - ok), checks, ok };
+}
+
+// ---------- merge several passes ----------
+const FIELD_LIST = ['date','route','fltNo','computed','reg','trip','altn1','minDsptchFuel','tankering','rampFuel',
+  'avWc','pdfPercent','avgWindDirSpeed','totalDistance','avgIsa','ci','fl','fuelBurn','zfw','tow','lwt','pl'];
+
+function editDist(a, b){
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i].concat(Array(b.length).fill(0)));
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+function snapReg(v, known){
+  if (!v || !known || !known.length) return v;
+  if (known.includes(v)) return v;
+  let best = null, bd = 9, tie = false;
+  for (const k of known){
+    const d = editDist(v, k);
+    if (d < bd){ bd = d; best = k; tie = false; } else if (d === bd) tie = true;
+  }
+  return (bd <= 2 && !tie) ? best : v;
+}
+function consensus(passes, opts){
+  opts = opts || {};
+  const rec = {}, flags = {};
+  const ranked = passes.slice().sort((a, b) => b.score - a.score);
+  for (const k of FIELD_LIST){
+    const weight = {}, srcFlag = {};
+    let total = 0;
+    ranked.forEach((p, i) => {
+      let v = p.rec[k];
+      if (k === 'reg') v = snapReg(v, opts.knownRegs);
+      if (!v) return;
+      let w = (p.weight || 1) * (1 + Math.max(0, p.score) * 0.25) - i * 0.001 - (p.flags[k] ? 0.5 : 0);
+      if (k === 'reg'){
+        const known = opts.knownRegs && opts.knownRegs.length;
+        if (known ? !opts.knownRegs.includes(v) : !/^S2[A-Z]{3}$/.test(v)) w *= 0.4;
+      }
+      weight[v] = (weight[v] || 0) + w; total += w;
+      if (p.flags[k]) srcFlag[v] = true;
+    });
+    const vals = Object.keys(weight);
+    if (!vals.length){ rec[k] = ''; continue; }
+    vals.sort((a, b) => weight[b] - weight[a]);
+    rec[k] = vals[0];
+    if (vals.length > 1 && weight[vals[0]] / total <= 0.6) flags[k] = true;
+    if (srcFlag[vals[0]] && vals.length === 1 && passes.length === 1) flags[k] = true;
+  }
+  if (rec.reg && opts.knownRegs && opts.knownRegs.length && !opts.knownRegs.includes(rec.reg)) flags.reg = true;
+  return { rec, flags };
+}
+// ==== PURE-LOGIC-END ====
+
+// ---------- rendering results table ----------
+function renderTable(){
+  resultsBody.innerHTML = '';
+  if (records.length === 0){
+    tableScroll.style.display = 'none';
+    legend.style.display = 'none';
+    exportControls.style.display = 'none';
+    resultsSub.textContent = 'No records yet — upload and extract PDFs above.';
+    return;
+  }
+  resultsSub.textContent = `${records.length} record${records.length===1?'':'s'} extracted. Click any cell to correct it.`;
+  tableScroll.style.display = 'block';
+  legend.style.display = 'block';
+  exportControls.style.display = 'flex';
+
+  records.forEach((rec, idx) => {
+    const tr = document.createElement('tr');
+    const staticCells = `<td>${escapeHtml(rec.fileName)}</td><td>${rec.pageNumber}</td>`;
+    const editableCells = FIELD_KEYS.map(k => {
+      const flagged = rec.flags && rec.flags[k];
+      return `<td contenteditable="true" data-idx="${idx}" data-key="${k}" class="${flagged?'flagged':''}">${escapeHtml(rec[k]||'')}</td>`;
+    }).join('');
+    tr.innerHTML = staticCells + editableCells;
+    resultsBody.appendChild(tr);
+  });
+
+  resultsBody.querySelectorAll('td[contenteditable=true]').forEach(td => {
+    td.addEventListener('blur', () => {
+      const idx = +td.dataset.idx, key = td.dataset.key;
+      records[idx][key] = td.textContent.trim();
+    });
+  });
+}
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+  const tsv = toTable('\t');
+  navigator.clipboard.writeText(tsv).then(() => alert(`Copied ${records.length} records — paste into Excel.`));
+});
+document.getElementById('csvBtn').addEventListener('click', () => {
+  const csv = toTable(',', true);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'cfp-extracted-data.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+function toTable(delim, quote){
+  const headers = ['File','Page','Date','Sector','Flt No','Computed','Reg','Trip','ALTN1','Min Dsptch Fuel',
+    'Tankering','Ramp Fuel','Actual Fuel','AV W/C','PDF %','Wind Dir/Spd','Total Dist','AVG ISA','CI','FL',
+    'Fuel Burn','ZFW','TOW','LWT','PL'];
+  const esc = v => {
+    v = (v==null?'':String(v));
+    if (quote) return '"' + v.replace(/"/g,'""') + '"';
+    return v.replace(/\t/g,' ');
+  };
+  const rows = records.map(r => {
+    const base = [r.fileName, r.pageNumber];
+    const rest = FIELD_KEYS.map(k => r[k] || '');
+    return base.concat(rest).map(esc).join(delim);
+  });
+  return [headers.map(esc).join(delim), ...rows].join('\n');
+}
+
+function escapeHtml(s){
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+</script>
+</body>
+</html>
